@@ -1,0 +1,135 @@
+---
+title: "Survival Analysis"
+author: "DC"
+date: "10/14/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(TH.data)
+library(survival)
+library(survminer)
+
+data(GBSG2, package = "TH.data")
+```
+
+```{r, echo=FALSE}
+# Kaplan-Meier estimate
+km <- survfit(Surv(time, cens) ~ 1, data = GBSG2)
+
+# plot of the Kaplan-Meier estimate
+ggsurvplot(km)
+
+# add the risk table to plot
+ggsurvplot(km, risk.table = TRUE)
+
+# add a line showing the median survival time
+ggsurvplot(km, risk.table = TRUE, surv.median.line = "hv")
+```
+
+```{r}
+# Weibull model
+wb <- survreg(Surv(time, cens) ~ 1, data = GBSG2)
+
+# Compute the median survival from the model
+predict(wb, type = "quantile", p = 1 - 0.5, newdata = data.frame(1))
+
+# Retrieve survival curve from model probabilities 
+surv <- seq(.99, .01, by = -.01)
+
+# Get time for each probability
+t <- predict(wb, type = "quantile", p = 1 - surv, newdata = data.frame(1))
+
+# Create data frame with the information
+surv_wb <- data.frame(time = t, surv = surv)
+
+# Look at first few lines of the result
+head(surv_wb)
+```
+
+```{r}
+# Comparing Weibull to Kaplan-Meier
+# Weibull model
+wb <- survreg(Surv(time, cens) ~ 1, data = GBSG2)
+
+# Retrieve survival curve from model
+surv <- seq(.99, .01, by = -.01)
+
+# Get time for each probability
+t <- predict(wb, type = "quantile", p = 1 - surv, newdata = data.frame(1))
+
+# Create data frame with the information needed for ggsurvplot_df
+surv_wb <- data.frame(time = t, surv = surv, 
+  upper = NA, lower = NA, std.err = NA)
+
+# Plot
+ggsurvplot_df(fit = surv_wb, surv.geom = geom_line)
+```
+
+```{r}
+# Weibull with covariates
+
+#Compute Weibull model
+wbmod <- survreg(Surv(time, cens) ~ horTh + tsize, data = GBSG2) 
+#dist argument can be used to specify distribution type (default is weibull)
+
+#Decide on covariate combinations
+newdat <- expand.grid(
+  horTh = levels(GBSG2$horTh), #All combination of hormonal therapy
+  tsize = quantile(GBSG2$tsize, probs = c (0.25, 0.5, 0.75)) #35/50/75 quantile of tumor size
+)
+
+#compute survival curves
+surv <- seq(0.99, 0.01, by = -0.01)
+t <- predict(wbmod, type = "quantile", p = 1 - surv, newdata = newdat)
+
+dim(t) # 6 rows, 99 columns
+
+#Create data.frame with survival curve information
+surv_wbmod_wide <- cbind(newdat, t)
+library(reshape2)
+#melt function transforms from wide to long format
+surv_wbmod <- melt(surv_wbmod_wide, id.vars = c("horTh", "tsize"),
+                   variable.name = "surv_id", value.name = "time")
+
+#Add survivial probability column from the surv_id
+surv_wbmod$surv <- surv[as.numeric(surv_wbmod$surv_id)]
+
+#Add columns upper, lower, std.err, and strata to the data.frame
+surv_wbmod[, c("upper", "lower", "std.err", "strata")] <- NA
+
+#plot
+ggsurvplot_df(surv_wbmod, surv.geom = geom_line,
+              linetype = "horTh", color = "tsize", legend.title = NULL)
+```
+
+```{r}
+#Cox model/Proportional Hazards model - less strict distributional assumptions
+coxmod <- coxph(Surv(time, cens) ~ horTh + tsize, data = GBSG2)
+
+#Patients data.frame
+newdat <- expand.grid(
+  horTh = levels(GBSG2$horTh),
+  tsize = quantile(GBSG2$tsize, probs = c(0.25, 0.5, 0.75))
+)
+rownames(newdat) <- letters[1:6]
+
+#compute survival curve
+coxsf <- survfit(coxmod, data = GBSG2, newdata = newdat, conf.type = "none")
+
+#compute data.frame needed for plotting
+surv_coxmod <- surv_summary(coxsf)
+
+#get a character vector of patient IDs
+pid <- as.character(surv_coxmod$strata)
+
+m_newdat <- newdat[pid, ]
+new_surv_coxmod <- cbind(surv_coxmod, m_newdat)
+
+ggsurvplot_df(new_surv_coxmod, linetype = "horTh", color = "tsize", 
+              legend.title = NULL, censor = FALSE)
+```
